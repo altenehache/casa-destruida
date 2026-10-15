@@ -87,10 +87,15 @@ const rtP = () => pressed.ArrowRight || pressed.KeyD;
 
 /* ---------- audio ---------- */
 let AC = null, muted = false;
+const VERSION = 'v1.1';
+function ensureAC() {
+  try { AC = AC || new (window.AudioContext || window.webkitAudioContext)(); if (AC.state === 'suspended') AC.resume(); } catch (e) {}
+  return AC;
+}
 function beep(f, d = 0.1, type = 'sine', v = 0.05, slide = 0) {
   if (muted) return;
   try {
-    AC = AC || new (window.AudioContext || window.webkitAudioContext)();
+    ensureAC();
     const o = AC.createOscillator(), g = AC.createGain(), t0 = AC.currentTime;
     o.type = type; o.frequency.setValueAtTime(f, t0);
     if (slide) o.frequency.linearRampToValueAtTime(Math.max(30, f + slide), t0 + d);
@@ -117,6 +122,171 @@ const SFX = {
   fall() { beep(500, .5, 'sine', .05, -420); },
   boss() { beep(120, .6, 'sawtooth', .07, 90); }
 };
+
+/* ---------- música ----------
+   Un solo tema principal (8 compases) que se reutiliza en todo el juego.
+   Cada mundo lo toca con otra escala/modo, tempo, ritmo, bajo, batería e instrumento. */
+const SCALES = {
+  ion: [0, 2, 4, 5, 7, 9, 11], lyd: [0, 2, 4, 6, 7, 9, 11], mix: [0, 2, 4, 5, 7, 9, 10], dor: [0, 2, 3, 5, 7, 9, 10],
+  aeo: [0, 2, 3, 5, 7, 8, 10], phr: [0, 1, 3, 5, 7, 8, 10], har: [0, 2, 3, 5, 7, 8, 11]
+};
+// [inicio en corcheas, grado de la escala, duración en corcheas] por compás
+const MOTIF = [
+  [[0, 0, 1], [1, 2, 1], [2, 4, 2], [4, 7, 2], [6, 4, 1], [7, 2, 1]],
+  [[0, 6, 3], [3, 4, 1], [4, 5, 2], [6, 4, 2]],
+  [[0, 3, 1], [1, 5, 1], [2, 7, 2], [4, 9, 2], [6, 7, 1], [7, 5, 1]],
+  [[0, 4, 4], [4, 2, 2], [6, 1, 1], [7, 0, 1]],
+  [[0, 0, 1], [1, 2, 1], [2, 4, 2], [4, 7, 2], [6, 4, 1], [7, 2, 1]],
+  [[0, 6, 2], [2, 8, 2], [4, 7, 2], [6, 5, 2]],
+  [[0, 5, 2], [2, 3, 2], [4, 4, 2], [6, 1, 2]],
+  [[0, 1, 2], [2, 6, 2], [4, 4, 2], [6, 8, 1], [7, 6, 1]]
+];
+const CHORDS = [0, 4, 5, 3, 0, 4, 3, 4];
+const TR = {
+  title:  { bpm: 116, root: 60, sc: 'ion', lead: 'glock', bass: 'bounce', drum: 'light', pad: 1, arp: 1, sw: .08 },
+  hub:    { bpm: 100, root: 60, sc: 'ion', lead: 'box', bass: 'soft', drum: 'shaker', pad: 1, arp: 1, sw: .12, thin: 1 },
+  shop:   { bpm: 92, root: 65, sc: 'lyd', lead: 'box', bass: 'soft', drum: 'shaker', pad: 1, arp: 1, sw: .22, thin: 1 },
+  intro:  { bpm: 76, root: 57, sc: 'aeo', lead: 'box', bass: 'none', drum: 'none', pad: 1, arp: 0, ten: .3, thin: 1 },
+  clear:  { bpm: 128, root: 67, sc: 'ion', lead: 'glock', bass: 'bounce', drum: 'disco', pad: 1, arp: 1 },
+  ending: { bpm: 132, root: 62, sc: 'ion', lead: 'glock', bass: 'bounce', drum: 'disco', pad: 1, arp: 1, big: 1 },
+  w0: { bpm: 124, root: 60, sc: 'ion', lead: 'glock', bass: 'bounce', drum: 'light', pad: 0, arp: 1, sw: .1 },        // Pastel: alegre
+  w1: { bpm: 110, root: 65, sc: 'dor', lead: 'funk', bass: 'funk', drum: 'funk', pad: 0, arp: 0, sw: .28, sync: 1 },  // Musical: funk sincopado
+  w2: { bpm: 82, root: 62, sc: 'lyd', lead: 'box', bass: 'soft', drum: 'shaker', pad: 1, arp: 1, sw: 0 },            // Almohadón: suave y flotante
+  w3: { bpm: 100, root: 55, sc: 'mix', lead: 'bubble', bass: 'bounce', drum: 'light', pad: 1, arp: 1, sw: .18 },      // Inodope: burbujeante
+  w4: { bpm: 152, root: 67, sc: 'ion', lead: 'reed', bass: 'oompah', drum: 'carnival', pad: 0, arp: 0, sw: 0 },       // diverTODO: feria
+  w5: { bpm: 118, root: 62, sc: 'dor', lead: 'pluck', bass: 'walk', drum: 'funk', pad: 0, arp: 0, sw: .15, sync: 1, ten: .25 }, // Artistation: travieso
+  w6: { bpm: 136, root: 64, sc: 'har', lead: 'saw', bass: 'drive', drum: 'rock', pad: 1, arp: 0, sw: 0, ten: .5 }     // Terock: oscuro y rockero
+};
+function trackFor(key) {
+  if (key[0] === 'b') { // jefe: mismo tema, modo menor, más rápido y tenso
+    const w = TR['w' + key.slice(1)];
+    return Object.assign({}, w, { sc: key === 'b6' ? 'phr' : 'har', bpm: Math.round(w.bpm * 1.12), lead: 'saw', bass: 'drive', drum: 'boss', pad: 1, arp: 0, sw: 0, sync: 0, ten: .85 });
+  }
+  return TR[key];
+}
+const BASSP = {
+  bounce: { 0: [0, 3], 4: [7, 3], 8: [0, 3], 12: [4, 3] }, soft: { 0: [0, 8], 8: [4, 8] },
+  funk: { 0: [0, 2], 3: [0, 1], 6: [7, 2], 8: [0, 2], 10: [4, 1], 11: [0, 1], 14: [7, 1] },
+  drive: { 0: [0, 2], 2: [0, 2], 4: [0, 2], 6: [7, 2], 8: [0, 2], 10: [0, 2], 12: [0, 2], 14: [7, 2] },
+  oompah: { 0: [0, 3], 8: [4, 3] }, walk: { 0: [0, 3], 4: [2, 3], 8: [4, 3], 12: [3, 3] }
+};
+const DRP = {
+  light: { k: [0, 8], s: [12], h: [2, 6, 10, 14] }, disco: { k: [0, 4, 8, 12], s: [4, 12], h: [2, 6, 10, 14] },
+  funk: { k: [0, 6, 10], s: [4, 12], h: [0, 2, 4, 6, 8, 10, 12, 14] }, carnival: { k: [0, 8], s: [4, 12], h: [2, 6, 10, 14], fill: 1 },
+  rock: { k: [0, 2, 8, 10], s: [4, 12], h: [0, 2, 4, 6, 8, 10, 12, 14], fill: 1 },
+  boss: { k: [0, 3, 6, 8, 10], s: [4, 12], h: [0, 2, 4, 6, 8, 10, 12, 14], fill: 1 }, shaker: { k: [], s: [], h: [2, 6, 10, 14] }, none: { k: [], s: [], h: [] }
+};
+const MU = { key: null, tr: null, node: null, master: null, noise: null, step: 0, next: 0, world: null, vol: -1 };
+const hz = m => 440 * Math.pow(2, (m - 69) / 12);
+function midi(tr, deg) { return tr.root + SCALES[tr.sc][((deg % 7) + 7) % 7] + 12 * Math.floor(deg / 7); }
+function tone(f, t, d, type, v, o = {}) {
+  const x = AC.createOscillator(), g = AC.createGain(), a = o.a || .005;
+  x.type = type; x.frequency.setValueAtTime(o.from || f, t);
+  if (o.from) x.frequency.exponentialRampToValueAtTime(f, t + (o.glide || .06));
+  if (o.det) x.detune.value = o.det;
+  g.gain.setValueAtTime(.0001, t); g.gain.linearRampToValueAtTime(v, t + a);
+  if (o.hold) g.gain.setValueAtTime(v, t + o.hold);
+  g.gain.exponentialRampToValueAtTime(.0001, t + Math.max(d, a + .02));
+  x.connect(g); let out = g;
+  if (o.lp) { const fl = AC.createBiquadFilter(); fl.type = 'lowpass'; fl.frequency.value = o.lp; g.connect(fl); out = fl; }
+  out.connect(MU.node);
+  if (o.vib) { const l = AC.createOscillator(), lg = AC.createGain(); l.frequency.value = 5.5; lg.gain.value = f * .014; l.connect(lg); lg.connect(x.frequency); l.start(t); l.stop(t + d + .1); }
+  x.start(t); x.stop(t + d + .1);
+}
+function noise(t, d, type, freq, v) {
+  const s = AC.createBufferSource(), fl = AC.createBiquadFilter(), g = AC.createGain();
+  s.buffer = MU.noise; fl.type = type; fl.frequency.value = freq;
+  g.gain.setValueAtTime(v, t); g.gain.exponentialRampToValueAtTime(.0001, t + d);
+  s.connect(fl); fl.connect(g); g.connect(MU.node); s.start(t); s.stop(t + d + .02);
+}
+function lead(tr, deg, t, d, acc) {
+  const m = midi(tr, deg) + (tr.big ? 0 : 0), f = hz(m), v = acc ? 1.15 : 1;
+  switch (tr.lead) {
+    case 'glock': tone(f, t, d + .5, 'sine', .07 * v); tone(f * 4, t, .14, 'sine', .02 * v); break;
+    case 'box': tone(f, t, d + .6, 'sine', .06 * v); tone(f * 3, t, .25, 'sine', .012 * v); break;
+    case 'funk': tone(f, t, d * .7, 'square', .03 * v, { lp: 1800 }); break;
+    case 'bubble': tone(f, t, d + .1, 'triangle', .07 * v, { from: f * .8, glide: .05 }); break;
+    case 'reed': tone(f, t, d, 'square', .026 * v, { lp: 2600, vib: 1, hold: d * .6 }); break;
+    case 'pluck': tone(f, t, d * .8 + .1, 'triangle', .08 * v); tone(f * 2, t, .1, 'sine', .02 * v); break;
+    case 'saw': tone(f, t, d, 'sawtooth', .026 * v, { lp: 2200, det: 8, hold: d * .6 }); tone(f, t, d, 'sawtooth', .02 * v, { lp: 2200, det: -8, hold: d * .6 }); break;
+  }
+  if (tr.big) tone(f * 2, t, d + .4, 'sine', .03 * v);
+}
+function schedStep(tr, st, t) {
+  const bar = st >> 4, s = st & 15, sd = 60 / tr.bpm / 4, tt = (s % 4 === 2) ? t + (tr.sw || 0) * sd * 2 : t, cd = CHORDS[bar];
+  // melodía
+  if (!(tr.thin && bar >= 4)) for (const e of tr.ev[st] || []) lead(tr, e[0], tt, e[1] * sd * .92, s % 4 === 0);
+  // acordes
+  if (tr.pad && s === 0) for (const k of [0, 2, 4]) tone(hz(midi(tr, cd + k)), t, sd * 15.5, 'triangle', .016, { a: .3, hold: sd * 9, lp: 1300 });
+  if (tr.arp && s % 2 === 0) tone(hz(midi(tr, cd + [0, 2, 4, 2][(s >> 1) & 3] + 7)), tt, sd * 3, 'sine', .016);
+  // bajo
+  const b = BASSP[tr.bass] && BASSP[tr.bass][s];
+  if (b) {
+    let m = midi(tr, cd + b[0]) - 24; while (m < 38) m += 12;
+    if (tr.bass === 'drive') tone(hz(m), tt, sd * b[1] * .9, 'sawtooth', .05, { lp: 650 });
+    else if (tr.bass === 'soft') tone(hz(m), tt, sd * b[1] * .95, 'sine', .09, { a: .02 });
+    else { tone(hz(m), tt, sd * b[1] * .85, 'triangle', .1); tone(hz(m + 12), tt, sd * b[1] * .4, 'sine', .02); }
+  }
+  if (tr.bass === 'oompah' && (s === 4 || s === 12)) for (const k of [0, 2, 4]) tone(hz(midi(tr, cd + k)), t, sd * 2, 'square', .012, { lp: 1200 });
+  // tensión: pulso nervioso en la tónica
+  if (tr.ten && s % 2 === 1) tone(hz(midi(tr, cd) - 12), t, sd * .8, 'square', .02 * tr.ten, { lp: 700 });
+  // batería
+  const dr = DRP[tr.drum] || DRP.none, fill = dr.fill && bar % 4 === 3 && s >= 12;
+  if (dr.k.includes(s)) tone(50, t, .22, 'sine', .22, { from: 150, glide: .1 });
+  if (fill || dr.s.includes(s)) { noise(t, .14, 'bandpass', 1900, fill ? .09 : .11); tone(190, t, .08, 'triangle', .05); }
+  if (dr.h.includes(s)) noise(t, s % 4 === 2 ? .08 : .04, 'highpass', 7000, tr.drum === 'shaker' ? .02 : .035);
+}
+function buildTrack(key) {
+  const tr = Object.assign({}, trackFor(key)); tr.ev = [];
+  MOTIF.forEach((notes, b) => notes.forEach(n => {
+    const st = b * 16 + n[0] * 2 + (tr.sync && n[0] % 2 === 1 ? -1 : 0);
+    (tr.ev[(st + 128) % 128] = tr.ev[(st + 128) % 128] || []).push([n[1], n[2] * 2]);
+  }));
+  return tr;
+}
+function musicWant() {
+  switch (G.mode) {
+    case 'title': case 'controls': case 'bestiary': return 'title';
+    case 'intro': return 'intro'; case 'hub': return 'hub'; case 'shop': return 'shop';
+    case 'clear': return 'clear'; case 'ending': return 'ending';
+    case 'card': case 'play': return (G.a && G.a.kind === 'arena' && G.boss ? 'b' : 'w') + G.w;
+  }
+  return null;
+}
+function musicSwitch(key) {
+  const now = AC.currentTime, world = /^[wb]\d$/.test(key) ? key.slice(1) : null;
+  if (MU.node) {
+    const old = MU.node; old.gain.cancelScheduledValues(now); old.gain.setValueAtTime(old.gain.value, now); old.gain.linearRampToValueAtTime(.0001, now + .35);
+    setTimeout(() => { try { old.disconnect(); } catch (e) {} }, 1000);
+  }
+  const keep = world !== null && world === MU.world && MU.tr;
+  MU.node = AC.createGain(); MU.node.gain.setValueAtTime(.0001, now); MU.node.gain.linearRampToValueAtTime(1, now + (keep ? .05 : .25)); MU.node.connect(MU.master);
+  MU.tr = buildTrack(key); MU.world = world;
+  if (!keep) { MU.step = 0; MU.next = now + .15; }
+}
+function musicInit() {
+  if (MU.master || !AC) return;
+  const comp = AC.createDynamicsCompressor(); MU.master = AC.createGain(); MU.master.gain.value = 0; MU.master.connect(comp); comp.connect(AC.destination);
+  const n = AC.sampleRate; MU.noise = AC.createBuffer(1, n, n); const d = MU.noise.getChannelData(0); for (let i = 0; i < n; i++) d[i] = Math.random() * 2 - 1;
+  setInterval(musicPump, 25);
+}
+function musicPump() {
+  if (!AC || AC.state !== 'running' || !MU.tr) return;
+  if (MU.next < AC.currentTime - .4) MU.next = AC.currentTime + .05;
+  while (MU.next < AC.currentTime + .25) {
+    schedStep(MU.tr, MU.step, MU.next);
+    MU.next += 60 / MU.tr.bpm / 4; MU.step = (MU.step + 1) % 128;
+  }
+}
+function musicTick() {
+  if (!AC) return; musicInit();
+  const target = muted ? 0 : (G.paused ? .3 : .85);
+  if (target !== MU.vol) { MU.vol = target; MU.master.gain.setTargetAtTime(target, AC.currentTime, .08); }
+  const key = musicWant();
+  if (key && key !== MU.key) { MU.key = key; musicSwitch(key); }
+}
+window.addEventListener('keydown', ensureAC); window.addEventListener('pointerdown', ensureAC);
+document.addEventListener('visibilitychange', () => { if (AC) { if (document.hidden) AC.suspend(); else AC.resume(); } });
 
 /* ---------- utils ---------- */
 const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
@@ -2311,6 +2481,8 @@ function drawTitle(c) {
   TITLE_ITEMS.forEach((s, i) => { const on = i === titleSel, y = 238 + i * 34; if (on) glossPanel(c, 80, y - 22, 280, 32, 14, 'rgba(255,127,184,.95)'); txt(c, s, 220, y, 20, '#fff', 'center', on ? 'rgba(120,30,80,.8)' : 'rgba(40,20,70,.8)'); });
   txt(c, `Piezas: ${totalPieces()} / 55`, 220, 412, 17, '#7a2a68', 'center', '#fff');
   txt(c, 'Flechas + Enter · M = sonido', 220, 434, 13, '#7a2a68', 'center', '#fff');
+  if (!AC || AC.state !== 'running') txt(c, '🔈 Pulsa una tecla para activar la música', 220, 454, 13, '#7a2a68', 'center', '#fff');
+  txt(c, VERSION, 944, 530, 14, '#7a2a68', 'right', '#fff');
   if (G.banner) { glossPanel(c, 300, 240, 360, 40, 16, 'rgba(60,40,90,.85)'); txt(c, G.banner.s, 480, 266, 17, '#fff', 'center'); }
 }
 
@@ -2638,7 +2810,9 @@ function tickOnce() {
     G.mf.t++; if (G.mf.t === 14) applyMode(); if (G.mf.t >= 28) G.mf = null;
   } else currentUpdate();
   if (G.banner && !['hub', 'play', 'shop', 'title'].includes(G.mode)) G.banner = null;
-  if (pressed.KeyM && G.mode !== 'title') muted = !muted;
+  if (pressed.KeyM) muted = !muted;
+  for (const k in pressed) { ensureAC(); break; }
+  musicTick();
   for (const k in pressed) delete pressed[k];
 }
 function drawFrame() {
